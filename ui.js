@@ -56,18 +56,20 @@
     IDK.forEach(function (k) { if (field[k] > domv) { domv = field[k]; domK = k; } });
     var anyField = domv > 0;
 
+    var goalF = (snap.goals && snap.goals.field) || 50;
     var title = el('div', 'gtitle');
-    title.appendChild(el('span', '', '場の影響力（政界の勢力図）'));
+    title.appendChild(el('span', '', '場の影響力（' + goalF + '超で決着）'));
     if (anyField && domK) {
       var dd = ideoDef(domK);
-      var st = el('span', 'gstrong', '優勢: ' + dd.short); st.style.color = dd.color;
+      var st = el('span', 'gstrong', '優勢: ' + dd.short + ' ' + domv + '/' + (goalF + 1)); st.style.color = dd.color;
       title.appendChild(st);
     }
     wrap.appendChild(title);
 
-    var maxv = 8; IDK.forEach(function (k) { if (field[k] > maxv) maxv = field[k]; });
+    // バーは勝利閾値(50)を基準に表示。50超で「決着」表示。
     IDK.forEach(function (k) {
       var d = ideoDef(k);
+      var hit = field[k] > goalF;
       var row = el('div', 'grow' + (anyField && domK === k ? ' gstrongrow' : ''));
       var em = imgEl(EMBLEM_DIR + 'ideo_' + k + '.png', 'gem');
       var emWrap = el('span', 'gemwrap'); emWrap.style.background = d.color;
@@ -75,18 +77,18 @@
       row.appendChild(emWrap);
       row.appendChild(el('span', 'gname', d.short));
       var track = el('div', 'gtrack');
-      var fill = el('div', 'gfill'); fill.style.width = Math.round((field[k] / maxv) * 100) + '%';
+      var fill = el('div', 'gfill'); fill.style.width = Math.min(100, Math.round((field[k] / goalF) * 100)) + '%';
       fill.style.background = d.color;
       track.appendChild(fill);
       track.appendChild(el('span', 'ginfl', String(field[k])));
       row.appendChild(track);
-      // 優勢思想は法案効果が増す
       var tail = el('span', 'gtail');
-      if (anyField && domK === k) { tail.textContent = '優勢'; tail.title = 'この思想が場で優勢。該当法案の効果が増す'; }
+      if (hit) { tail.textContent = '決着!'; }
+      else if (anyField && domK === k) { tail.textContent = '優勢'; tail.title = 'この思想が場で優勢。該当法案の効果が増す'; }
       row.appendChild(tail);
       wrap.appendChild(row);
     });
-    var note = el('div', 'gnote', '全プレイヤーの政治家の思想値を合算した、政界における各思想の勢力。優勢な思想の法案は効果が増す。');
+    var note = el('div', 'gnote', '全員の政治家の思想値を合算した政界の勢力。いずれかが' + goalF + 'を超えると、その思想の筆頭プレイヤーが勝利。優勢な思想の法案は効果が増す。');
     wrap.appendChild(note);
     return wrap;
   }
@@ -97,20 +99,28 @@
     snap.players.forEach(function (p) {
       var card = el('div', 'pcard' + (p.idx === humanIdx && !hotseat ? ' me' : '') + (p.idx === snap.curIdx ? ' active' : ''));
       card.style.borderLeftColor = p.color;
+      var goals = snap.goals || { trust: 20, pm: 3, field: 50 };
       var head = el('div', 'phead');
       head.appendChild(el('span', '', p.name));
       if (p.isPM) head.appendChild(el('span', 'pm-badge', '首班'));
       card.appendChild(head);
       var res = el('div', 'res');
       res.appendChild(el('span', '', '💰' + p.gold + 'G'));
-      res.appendChild(el('span', '', '信用' + p.trust));
-      res.appendChild(el('span', '', '影響' + p.total));
+      // 信用(勝利②: 20超)・首班回数(勝利③: 3回)を進捗として強調
+      var tw = el('span', p.trust > goals.trust ? 'goalhit' : '', '🤝信用 ' + p.trust + '/' + (goals.trust + 1));
+      res.appendChild(tw);
+      var pw = el('span', p.pmCount >= goals.pm ? 'goalhit' : '', '🗳首班 ' + p.pmCount + '/' + goals.pm);
+      res.appendChild(pw);
       card.appendChild(res);
+      var res2 = el('div', 'res');
+      res2.appendChild(el('span', '', '影響計' + p.total));
+      card.appendChild(res2);
+      // 思想別 影響力(勝利①の素=場の合算に効く)。最強をハイライト。
       var iprow = el('div', 'iprow');
       IDK.forEach(function (k) {
         var chip = el('div', 'ipchip s-' + k + (p.strongest === k ? ' lead' : ''));
-        chip.innerHTML = '<b>' + p.ip[k] + '</b>';
-        chip.title = ideoJp(k) + ' IP:' + p.ip[k] + ' / 影響:' + p.infl[k];
+        chip.innerHTML = '<b>' + p.infl[k] + '</b>';
+        chip.title = ideoJp(k) + ' 影響力:' + p.infl[k];
         iprow.appendChild(chip);
       });
       card.appendChild(iprow);
@@ -331,7 +341,6 @@
   function startGame() {
     var name = $('pname').value || 'あなた';
     var n = parseInt($('pcount').value, 10);
-    var winip = parseInt($('winip').value, 10);
     hotseat = $('hotseat').checked;
     var players = [];
     for (var i = 0; i < n; i++) {
@@ -340,7 +349,7 @@
     }
     humanIdx = 0;
     var seed = (Date.now() & 0x7fffffff) || 12345;
-    game = new ENGINE.Game({ seed: seed, players: players, winIP: winip });
+    game = new ENGINE.Game({ seed: seed, players: players });
     aiProvider = AI.makeAI();
     $('setup').style.display = 'none';
     $('game').style.display = 'grid';
@@ -370,18 +379,19 @@
   function showRules() {
     var mc = $('modal-content');
     mc.innerHTML = '<h2>POLITICA 遊び方</h2>' +
-      '<p>各プレイヤーは議員5名を擁する政党。自分の手番に下記コマンドを<b>各1回ずつ</b>実行できる。' +
-      'いずれかの<b>イデオロギーIPを勝利値まで貯めれば勝利</b>。</p>' +
+      '<p>各プレイヤーは議員5名を擁する政党。自分の手番に下記コマンドを<b>1つだけ</b>実行してターン終了。</p>' +
+      '<p><b>勝利条件(いずれか)</b>:<br>① どれかの思想の<b>場の影響力が50を超える</b>→その思想で最も影響力の高い人が勝利<br>' +
+      '② <b>信用が20を超える</b>→そのプレイヤーが勝利<br>③ <b>選挙で3回首班</b>に選ばれる→そのプレイヤーが勝利</p>' +
       '<ul>' +
-      '<li>📜<b>法案を引く</b>: 法案カードを1枚手札に加える(手札3枚まで)。</li>' +
-      '<li>👤<b>政治家を入替</b>: 山札から3枚引き、1枚を自党の議員と入れ替える(常に5名)。影響力の合計が政治力。</li>' +
-      '<li>🏛<b>法案を提出</b>: 法案を採決にかける。賛成影響力>反対かつ必要影響力で可決。提出者はIPと信用を得る。' +
-      '<b>自分の地盤(影響力)・高い信用・場で優勢な思想</b>だと法案が真価を発揮し追加IP。</li>' +
-      '<li>🗳<b>選挙を行う</b>: 信用2を払い首班指名選挙。影響力の票を最も集めた者が首班(首相)に。' +
-      '首班は組閣で信用+5・最強思想IP+2、さらに毎手番の施政で最強思想IP+1。</li>' +
-      '<li>💰<b>買収(5G)</b>: 相手の議員1名を奪い自党へ(玉突きで自党の最弱を放出)。</li>' +
+      '<li>💰<b>献金</b>: +1G(首班は+2G)。</li>' +
+      '<li>📜<b>法案を引く</b>: 法案を1枚手札へ(首班は2枚、手札3枚まで)。</li>' +
+      '<li>👤<b>政治家を入替</b>: 山札3枚から1枚を自党の議員と入替(常に5名)。<b>首班は入替不可</b>。</li>' +
+      '<li>🏛<b>法案を提出</b>: 採決。賛成影響力>反対かつ必要影響力で可決し<b>信用</b>を得る。' +
+      '<b>地盤(その思想の影響力≥10)・場で優勢</b>だと真価を発揮し信用が増す。</li>' +
+      '<li>🗳<b>選挙を行う</b>: 信用2を払い首班指名選挙。最多得票で首班(通算+1)。現職は再選にやや不利。</li>' +
+      '<li>💰<b>買収(5G)</b>: 相手の議員1名を奪う(最弱を放出)。<b>首班は買収する/されるが不可</b>(議員固定)。</li>' +
       '</ul>' +
-      '<p>無主義の政治家は票数(影響力)にはなりますが、特定思想のIPは伸ばしません。</p>';
+      '<p>無主義の政治家は票数(影響力)にはなりますが、特定思想の勢力は伸ばしません。</p>';
     var b = el('button', 'ghost', '閉じる'); b.onclick = closeModal;
     mc.appendChild(b);
     $('modal').classList.remove('modal-hidden');
@@ -394,7 +404,7 @@
     if (location.search.indexOf('fast=1') >= 0) FAST = true;
     var players = [];
     for (var i = 0; i < n; i++) players.push({ name: DATA.PLAYER_COLOR_NAMES[i] + 'AI', isAI: true });
-    game = new ENGINE.Game({ seed: 12345, players: players, winIP: 14 });
+    game = new ENGINE.Game({ seed: 12345, players: players });
     aiProvider = AI.makeAI();
     $('setup').style.display = 'none';
     $('game').style.display = 'grid';

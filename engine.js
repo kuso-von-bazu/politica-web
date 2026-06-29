@@ -1,11 +1,13 @@
-/* POLITICA -ポリティカ- ルールエンジン (コマンド選択型 / 双六廃止版)
+/* POLITICA -ポリティカ- ルールエンジン (コマンド選択型 / 1ターン1コマンド)
    非同期 choice プロバイダ方式 (UI=クリック待ち / AI=即決) で駆動。Node/ブラウザ両対応。
-   1ターンに各コマンド(法案獲得/政治家入替/法案提出/選挙/買収)を1回ずつ実行できる。
-   議員は常に5人。IPは法案成立・選挙・現職特典から得る。詳細は 設計メモ_仮決定.md。 */
+   各ターン、いずれかのコマンドを1回だけ実行する。
+   コマンド: 献金 / 法案を引く / 政治家を入替 / 法案を提出 / 選挙を行う / 買収。
+   勝利条件(3種): ①場の影響力が50超(その思想最大の者) ②信用が20超 ③選挙で3回首班。
+   詳細は 設計メモ_仮決定.md。 */
 (function (root) {
   'use strict';
   var DATA = root.PL_DATA || (typeof require !== 'undefined' ? require('./data.js') : null);
-  var IDEOLOGIES = DATA.IDEOLOGIES, WIN_IP = DATA.WIN_IP;
+  var IDEOLOGIES = DATA.IDEOLOGIES;
   var IDKEYS = IDEOLOGIES.map(function (i) { return i.key; });
 
   function makeRng(seed) {
@@ -16,10 +18,13 @@
   function emptyIdeo() { return { cap: 0, mil: 0, com: 0, sci: 0, env: 0 }; }
   function ideoJp(k) { for (var i = 0; i < IDEOLOGIES.length; i++) if (IDEOLOGIES[i].key === k) return IDEOLOGIES[i].jp; return k; }
 
-  var POL_SLOTS = 5;     // 議員スロット(常にフル)
-  var LAW_HAND = 3;      // 法案手札上限
-  var BRIBE_COST = 5;    // 買収コスト(G)
-  var ELECTION_TRUST = 2;// 選挙を起こす信用コスト
+  var POL_SLOTS = 5;       // 議員スロット(常にフル)
+  var LAW_HAND = 3;        // 法案手札上限
+  var BRIBE_COST = 5;      // 買収コスト(G)
+  var ELECTION_TRUST = 2;  // 選挙を起こす信用コスト
+  var FIELD_WIN = 50;      // 勝利①: 場の影響力がこれを超える
+  var TRUST_WIN = 20;      // 勝利②: 信用がこれを超える
+  var PM_WIN = 3;          // 勝利③: 選挙でこの回数首班になる
 
   // =================================================================
   class Game {
@@ -32,15 +37,13 @@
           isAI: !!p.isAI, color: DATA.PLAYER_COLORS[i],
           pols: [],            // 政治家スロット(常に5)
           laws: [],            // 法案手札(最大3)
-          ip: emptyIdeo(),     // イデオロギーポイント(表示用整数)
-          ipAcc: emptyIdeo(),  // IP端数キャリー
-          gold: 6, trust: 10,
+          gold: 6, trust: 8,
           isPM: false,
-          used: {}             // このターン使用済みコマンド
+          pmCount: 0           // 選挙で首班に選ばれた回数
         };
       });
       this.numPlayers = this.players.length;
-      this.winIP = config.winIP || WIN_IP;
+      this.FIELD_WIN = FIELD_WIN; this.TRUST_WIN = TRUST_WIN; this.PM_WIN = PM_WIN;
       this.log = [];
       this.turn = 0;
       this.curIdx = 0;
@@ -50,7 +53,7 @@
       this.phase = 'setup';
       this.enacted = [];          // 成立法案 [{card, owner}] (最大5)
       this.lawFlags = {};
-      this.electionCooldown = 0;  // 選挙は全体で一定ターン間あけて行う
+      this.electionCooldown = 0;
 
       this.polDeck = this._shuffle(deepCopy(DATA.POLITICIANS));
       this.lawDeck = this._shuffle(deepCopy(DATA.LAWS));
@@ -77,20 +80,6 @@
     drawLaw() { return this._draw(this.lawDeck, 'lawDiscard'); }
 
     logMsg(s) { this.log.push({ turn: this.turn, text: s }); }
-
-    addIP(p, k, amt) {
-      if (amt <= 0) return 0;
-      p.ipAcc[k] += amt;
-      var whole = Math.floor(p.ipAcc[k] + 1e-9);
-      if (whole > 0) { p.ip[k] += whole; p.ipAcc[k] -= whole; }
-      return whole;
-    }
-    // イデオロギー補正(IDEO_WEIGHT)込みのIP加算。全IP源で使い、各思想の勝率を均す。
-    addIPw(p, k, amt) {
-      var W = (DATA.IDEO_WEIGHT && DATA.IDEO_WEIGHT[k]) || 1;
-      return this.addIP(p, k, amt * W);
-    }
-
     notify() { if (this.ctx && this.ctx.notify) return this.ctx.notify(this); }
     choose(pi, dec) { return this.ctx.choose(pi, dec, this); }
 
@@ -118,7 +107,6 @@
       });
       return best;
     }
-    // 場(政界全体)の各思想影響力と、優勢な思想
     fieldInfluence() {
       var f = emptyIdeo(), self = this;
       this.players.forEach(function (p) { var s = self.influenceByIdeo(p); IDKEYS.forEach(function (k) { f[k] += s[k]; }); });
@@ -129,6 +117,13 @@
       IDKEYS.forEach(function (k) { if (f[k] > bv) { bv = f[k]; best = k; } });
       return best;
     }
+    // ある思想で最も影響力の高いプレイヤー
+    topInIdeo(k) {
+      var best = null, bv = -1, self = this;
+      this.players.forEach(function (p) { var v = self.influenceByIdeo(p)[k]; if (v > bv) { bv = v; best = p; } });
+      return best;
+    }
+    polTotal(c) { var s = (c.infl.non || 0); IDKEYS.forEach(function (k) { s += (c.infl[k] || 0); }); return s; }
 
     // =================================================================
     //  メインループ
@@ -137,13 +132,13 @@
       this.ctx = ctx;
       await this.setup();
       var guard = 0;
-      while (!this.over && guard < 3000) {
+      while (!this.over && guard < 6000) {
         guard++;
         await this.playTurn(this.players[this.curIdx]);
         if (this.over) break;
         this.curIdx = (this.curIdx + 1) % this.numPlayers;
         if (this.curIdx === this.pmIdx % this.numPlayers) this.turn++;
-        if (this.turn > 200) break; // 念のための上限
+        if (this.turn > 100) { this._declareByProgress(); break; } // 長期化時は進捗トップが勝利
       }
       this.phase = 'gameover';
       await this.notify();
@@ -156,89 +151,109 @@
       this.curIdx = this.pmIdx;
       this.players[this.pmIdx].isPM = true;
       var self = this;
-      // 全員 議員5人フルでスタート
       this.players.forEach(function (p) {
         for (var i = 0; i < POL_SLOTS; i++) { var c = self.drawPol(); if (c) p.pols.push(c); }
         p._leaderId = self.leaderPol(p) ? self.leaderPol(p).id : null;
       });
-      this.logMsg('ゲーム開始。各プレイヤーは議員5名を擁する。初代首班は' + this.players[this.pmIdx].name + '。');
+      this.logMsg('ゲーム開始。各プレイヤーは議員5名を擁する。初代首班は' + this.players[this.pmIdx].name + '(初代は選挙回数に数えない)。');
       this.turn = 1;
       await this.notify();
     }
 
+    // ---- 勝利判定(3種) ----
     checkWin() {
+      // ② 信用20超
       for (var i = 0; i < this.players.length; i++) {
-        var p = this.players[i];
-        for (var k = 0; k < IDKEYS.length; k++) {
-          if (p.ip[IDKEYS[k]] >= this.winIP) { this._declareWin(p, ideoJp(IDKEYS[k]) + 'IPが' + this.winIP + '到達'); return true; }
+        if (this.players[i].trust > TRUST_WIN) { this._declareWin(this.players[i], '信用が' + TRUST_WIN + 'を超えた'); return true; }
+      }
+      // ③ 選挙で3回首班
+      for (var j = 0; j < this.players.length; j++) {
+        if (this.players[j].pmCount >= PM_WIN) { this._declareWin(this.players[j], '選挙で' + PM_WIN + '回首班に選ばれた'); return true; }
+      }
+      // ① 場の影響力50超 → その思想で最も影響力の高い者
+      var f = this.fieldInfluence();
+      for (var k = 0; k < IDKEYS.length; k++) {
+        if (f[IDKEYS[k]] > FIELD_WIN) {
+          var w = this.topInIdeo(IDKEYS[k]);
+          this._declareWin(w, ideoJp(IDKEYS[k]) + 'の場の影響力が' + FIELD_WIN + 'を超え、その思想の筆頭になった');
+          return true;
         }
       }
       return false;
     }
     _declareWin(p, why) { this.over = true; this.winner = p; this.logMsg('★' + p.name + 'の勝利! (' + why + ')'); }
+    // 長期化時: 各勝利条件への到達率が最も高いプレイヤーを勝者とする
+    _declareByProgress() {
+      var self = this, f = this.fieldInfluence();
+      var best = null, bs = -1;
+      this.players.forEach(function (p) {
+        var fieldShare = 0;
+        IDKEYS.forEach(function (k) { if (self.topInIdeo(k).idx === p.idx) fieldShare = Math.max(fieldShare, self.influenceByIdeo(p)[k] / FIELD_WIN); });
+        var sc = Math.max(p.trust / TRUST_WIN, p.pmCount / PM_WIN, fieldShare);
+        if (sc > bs) { bs = sc; best = p; }
+      });
+      this._declareWin(best || this.players[0], '規定ターン到達・進捗トップ');
+    }
 
     // =================================================================
-    //  1ターン: コマンドを各1回ずつ
+    //  1ターン: いずれかのコマンドを1回
     // =================================================================
     async playTurn(p) {
       if (this.over) return;
       this.curIdx = p.idx;
       this.phase = 'turn';
-      p.used = {};
       this.logMsg('―― ' + p.name + ' の手番 ――');
-      // 現職特典(首班は手番開始時に最強思想IPを蓄積。補正込みのため思想により増分が異なる)
-      if (p.isPM && p.pols.length) {
-        var sk = this.strongestIdeo(p);
-        var got = this.addIPw(p, sk, 1);
-        this.logMsg(p.name + '(首班)の施政により' + ideoJp(sk) + 'IP' + (got > 0 ? '+' + got : 'を蓄積') + ' (計' + p.ip[sk] + ')。');
-        if (this.checkWin()) return;
-      }
       await this.notify();
 
-      var guard = 0;
-      while (guard < 12 && !this.over) {
-        guard++;
-        var opts = this.availableCommands(p);
-        var act = await this.choose(p.idx, { type: 'turnAction', options: opts, when: 'main' });
-        var id = act && act.id ? act.id : 'done';
-        if (id === 'done') break;
-        p.used[id] = true;
-        if (id === 'lawDraw') await this.cmdLawDraw(p);
-        else if (id === 'polSwap') await this.cmdPolSwap(p);
-        else if (id === 'lawPropose') await this.cmdLawPropose(p);
-        else if (id === 'bribe') await this.cmdBribe(p);
-        else if (id === 'election') await this.cmdElection(p);
-        if (this.checkWin()) return;
-        await this.notify();
-      }
+      var opts = this.availableCommands(p);
+      var act = await this.choose(p.idx, { type: 'turnAction', options: opts, when: 'main' });
+      var id = act && act.id ? act.id : 'done';
+      if (id === 'donate') await this.cmdDonate(p);
+      else if (id === 'lawDraw') await this.cmdLawDraw(p);
+      else if (id === 'polSwap') await this.cmdPolSwap(p);
+      else if (id === 'lawPropose') await this.cmdLawPropose(p);
+      else if (id === 'bribe') await this.cmdBribe(p);
+      else if (id === 'election') await this.cmdElection(p);
+
+      if (this.checkWin()) return;
       if (this.electionCooldown > 0) this.electionCooldown--;
       await this.notify();
     }
 
     availableCommands(p) {
       var opts = [];
-      if (!p.used.lawDraw && p.laws.length < LAW_HAND) opts.push({ id: 'lawDraw', label: '法案を引く' });
-      if (!p.used.polSwap) opts.push({ id: 'polSwap', label: '政治家を入替' });
-      if (!p.used.lawPropose && p.laws.length > 0 && this.enacted.length < 5 && !(this.lawFlags.purge && this.strongestIdeo(p) === 'com'))
+      opts.push({ id: 'donate', label: '献金(+' + (p.isPM ? 2 : 1) + 'G)' });
+      if (p.laws.length < LAW_HAND) opts.push({ id: 'lawDraw', label: '法案を引く' + (p.isPM ? '(2枚)' : '') });
+      if (!p.isPM) opts.push({ id: 'polSwap', label: '政治家を入替' });
+      if (p.laws.length > 0 && this.enacted.length < 5 && !(this.lawFlags.purge && this.strongestIdeo(p) === 'com'))
         opts.push({ id: 'lawPropose', label: '法案を提出' });
-      if (!p.used.bribe && p.gold >= BRIBE_COST && this.otherHavePols(p)) opts.push({ id: 'bribe', label: '買収(' + BRIBE_COST + 'G)' });
-      if (!p.used.election && this.electionCooldown <= 0 && p.trust >= ELECTION_TRUST) opts.push({ id: 'election', label: '選挙を行う(信用' + ELECTION_TRUST + ')' });
-      opts.push({ id: 'done', label: 'ターンを終える' });
+      if (!p.isPM && p.gold >= BRIBE_COST && this.bribable(p)) opts.push({ id: 'bribe', label: '買収(' + BRIBE_COST + 'G)' });
+      if (this.electionCooldown <= 0 && p.trust >= ELECTION_TRUST) opts.push({ id: 'election', label: '選挙を行う(信用' + ELECTION_TRUST + ')' });
+      opts.push({ id: 'done', label: '何もしない(ターン終了)' });
       return opts;
     }
-    otherHavePols(p) { return this.players.some(function (q) { return q.idx !== p.idx && q.pols.length > 0; }); }
+    bribable(p) { return this.players.some(function (q) { return q.idx !== p.idx && !q.isPM && q.pols.length > 0; }); }
 
-    // ---- コマンド: 法案獲得 ----
-    async cmdLawDraw(p) {
-      var c = this.drawLaw();
-      if (c) { p.laws.push(c); this.logMsg(p.name + 'は法案「' + c.name + '」を手札に加えた。'); }
-      else this.logMsg('法案山札が尽きている。');
+    // ---- 献金 ----
+    async cmdDonate(p) {
+      var g = p.isPM ? 2 : 1;
+      p.gold += g;
+      this.logMsg(p.name + 'は献金で +' + g + 'G (所持' + p.gold + 'G)。');
     }
 
-    // ---- コマンド: 政治家入替 ----
+    // ---- 法案獲得(首班は2枚) ----
+    async cmdLawDraw(p) {
+      var n = p.isPM ? 2 : 1;
+      for (var i = 0; i < n && p.laws.length < LAW_HAND; i++) {
+        var c = this.drawLaw();
+        if (c) { p.laws.push(c); this.logMsg(p.name + 'は法案「' + c.name + '」を手札に加えた。'); }
+      }
+    }
+
+    // ---- 政治家入替(首班は不可・availableで制御) ----
     async cmdPolSwap(p) {
       var n = 3;
-      if (this.lawFlags.redArmy && p.isPM) n = 4; // 赤軍の設立: 首班は4枚から
+      if (this.lawFlags.redArmy && p.isPM) n = 4;
       var drawn = [];
       for (var i = 0; i < n; i++) { var c = this.drawPol(); if (c) drawn.push(c); }
       if (!drawn.length) { this.logMsg('政治家山札が尽きている。'); return; }
@@ -259,20 +274,18 @@
       p.pols.forEach(function (c, i) { var t = self.polTotal(c); if (t < wv) { wv = t; wi = i; } });
       return wi;
     }
-    polTotal(c) { var s = (c.infl.non || 0); IDKEYS.forEach(function (k) { s += (c.infl[k] || 0); }); return s; }
 
-    // ---- コマンド: 法案提出 ----
+    // ---- 法案提出 ----
     async cmdLawPropose(p) {
       if (p.laws.length === 0) return;
       var pick = await this.choose(p.idx, { type: 'pickCard', kind: 'law', cards: p.laws, cancelable: true, q: '提出する法案' });
-      if (!pick || pick.index == null) { p.used.lawPropose = false; return; }
+      if (!pick || pick.index == null) return;
       var card = p.laws[pick.index];
       var need = this.lawNeed(card);
       this.logMsg(p.name + 'が法案「' + card.name + '」を提出 (必要影響力' + need + '/提出者' + this.totalInfluence(p) + ')。');
       p.laws.splice(pick.index, 1);
       await this.runVote(p, card, need);
     }
-
     lawNeed(card) {
       var s = 0; IDKEYS.forEach(function (k) { s += Math.abs(card.d[k] || 0); });
       return Math.max(3, s * 2);
@@ -311,34 +324,24 @@
       return arr.slice(0, 2).some(function (x) { return x.i === p.idx; });
     }
 
-    // 法案成立: 影響力/信用/場の影響力に応じて効果を発揮
+    // 法案成立 → 信用を得る。場で優勢/地盤が強いと真価を発揮し信用が増す。
     async enactLaw(proposer, card, supporters) {
-      var self = this;
-      var W = DATA.IDEO_WEIGHT || {};
-      // 主たる思想 = 正デルタが最大の思想
+      proposer.trust += (card.pip || 0);
+      supporters.forEach(function (s) { s.trust += (card.aip || 0); });
+      // 主たる思想
       var primary = null, pv = 0;
       IDKEYS.forEach(function (k) { if ((card.d[k] || 0) > pv) { pv = card.d[k]; primary = k; } });
-      // 基本IP(正デルタのみ)
-      IDKEYS.forEach(function (k) { var d = card.d[k] || 0; if (d > 0) self.addIP(proposer, k, d * (W[k] || 1)); });
-      proposer.trust += (card.pip || 0);
-      supporters.forEach(function (s) {
-        IDKEYS.forEach(function (k) { var d = card.d[k] || 0; if (d > 0) self.addIP(s, k, d * (W[k] || 1) / 2); });
-        s.trust += (card.aip || 0);
-      });
-      // 条件付き効果(法案が真価を発揮する条件)
       if (primary) {
         var infl = this.influenceByIdeo(proposer);
-        var fieldDom = this.fieldDominant();
         var bonus = 0, reasons = [];
         if (infl[primary] >= 10) { bonus += 1; reasons.push('地盤(' + ideoJp(primary) + '影響力' + infl[primary] + ')'); }
-        if (proposer.trust >= 12) { bonus += 1; reasons.push('高信用'); }
-        if (fieldDom === primary) { bonus += 2; reasons.push('場の支持'); }
+        if (this.fieldDominant() === primary) { bonus += 2; reasons.push('場の支持'); }
         if (bonus > 0) {
-          var bg = this.addIPw(proposer, primary, bonus);
-          this.logMsg('法案が真価を発揮! ' + ideoJp(primary) + 'IP' + (bg > 0 ? '+' + bg : 'を上積み') + ' [' + reasons.join('・') + ']');
+          proposer.trust += bonus;
+          this.logMsg('法案が真価を発揮! 信用+' + bonus + ' [' + reasons.join('・') + ']');
         }
       }
-      this.logMsg(proposer.name + 'はIP/信用を獲得した。');
+      this.logMsg(proposer.name + 'は信用を得た (信用' + proposer.trust + ')。');
       this.enacted.push({ card: card, owner: proposer.idx });
       if (this.enacted.length > 5) { var old = this.enacted.shift(); this.lawDiscard.push(old.card); this.clearLawFlag(old.card); }
       this.applyLawFlag(card);
@@ -357,36 +360,34 @@
       if (m[card.name]) this.lawFlags[m[card.name]] = false;
     }
 
-    // ---- コマンド: 買収(5G) ----
+    // ---- 買収(5G・首班は対象外/実行不可) ----
     async cmdBribe(p) {
-      var targets = this.players.filter(function (q) { return q.idx !== p.idx && q.pols.length > 0; });
-      if (!targets.length) { p.used.bribe = false; return; }
-      var t = await this.choose(p.idx, { type: 'pickPlayer', players: targets.map(function (q) { return q.idx; }), q: '買収する相手' });
-      if (!t || t.idx == null) { p.used.bribe = false; return; }
+      var targets = this.players.filter(function (q) { return q.idx !== p.idx && !q.isPM && q.pols.length > 0; });
+      if (!targets.length) return;
+      var t = await this.choose(p.idx, { type: 'pickPlayer', players: targets.map(function (q) { return q.idx; }), q: '買収する相手(首班は不可)' });
+      if (!t || t.idx == null) return;
       var target = this.players[t.idx];
+      if (target.isPM) { this.logMsg('首班は買収できない。'); return; }
       var pc = await this.choose(p.idx, { type: 'pickPolitician', cards: target.pols, q: '奪う政治家', fromOther: true });
-      if (!pc || pc.take == null) { p.used.bribe = false; return; }
-      if (p.gold < BRIBE_COST) { p.used.bribe = false; return; }
-      // 自分の議員5は維持: 奪った議員と引き換えに自分の最弱議員を相手へ渡す(玉突き) ことはせず、
-      // 自分の最弱を捨て、相手から奪った議員を加える(相手は1人減る)。
+      if (!pc || pc.take == null) return;
+      if (p.gold < BRIBE_COST) return;
       var stolen = target.pols.splice(pc.take, 1)[0];
       var ri = this.weakestSlot(p);
       var dropped = p.pols.splice(ri, 1, stolen)[0];
       if (dropped) this.polDiscard.push(dropped);
       p.gold -= BRIBE_COST;
       this.logMsg(p.name + 'は' + target.name + 'から「' + stolen.name + '」を買収(' + BRIBE_COST + 'G)。自党の「' + (dropped ? dropped.name : '空き') + '」を放出。');
-      // 相手は議員が減るので山札から補充(常に5人)
       var refill = this.drawPol(); if (refill) target.pols.push(refill);
       this.onLeaderMaybeChanged(p); this.onLeaderMaybeChanged(target);
     }
 
-    // ---- コマンド: 選挙 ----
+    // ---- 選挙 ----
     async cmdElection(p) {
-      if (p.trust < ELECTION_TRUST || this.electionCooldown > 0) { p.used.election = false; return; }
+      if (p.trust < ELECTION_TRUST || this.electionCooldown > 0) return;
       p.trust -= ELECTION_TRUST;
       this.logMsg(p.name + 'が選挙を要求した(信用-' + ELECTION_TRUST + ')。');
       await this.runElection();
-      this.electionCooldown = this.numPlayers; // 一巡あける
+      this.electionCooldown = this.numPlayers * 2; // 選挙は間隔をあける(連打抑制)
     }
 
     async runElection() {
@@ -400,8 +401,13 @@
         if (ans && ans.run) cands.push(q.idx);
       }
       if (cands.length === 0) cands = [this.pmIdx];
+      var incumbent = this.pmIdx; // 現職は再選に不利(現職忌避)
       var tally = {}; cands.forEach(function (c) { tally[c] = 0; });
-      cands.forEach(function (c) { tally[c] += this.totalInfluence(this.players[c]); }, this);
+      cands.forEach(function (c) {
+        var w = this.totalInfluence(this.players[c]);
+        if (c === incumbent) w = Math.round(w * 0.7);
+        tally[c] += w;
+      }, this);
       for (var j = 0; j < this.players.length; j++) {
         var v = this.players[j];
         if (cands.indexOf(v.idx) >= 0) continue;
@@ -415,20 +421,16 @@
         for (var r = 0; r < ranked.length; r++) { if (this.strongestIdeo(this.players[ranked[r]]) !== 'mil') { winner = ranked[r]; break; } }
       }
       this.players.forEach(function (pl) { pl.isPM = false; });
-      this.pmIdx = winner; this.players[winner].isPM = true;
-      var w = this.players[winner];
-      this.logMsg(w.name + 'が首班に指名された! (得票' + tally[winner] + ')');
-      // 首班の特典: 組閣で信用+5、最強思想IP+2(補正込み)
-      w.trust += 5;
-      var sk = this.strongestIdeo(w);
-      var eg = this.addIPw(w, sk, 2);
-      this.logMsg(w.name + 'は組閣で信用+5、' + ideoJp(sk) + 'IP' + (eg > 0 ? '+' + eg : 'を蓄積') + ' (計' + w.ip[sk] + ')。');
+      this.pmIdx = winner; var w = this.players[winner];
+      w.isPM = true; w.pmCount += 1;
+      this.logMsg(w.name + 'が首班に指名された! (得票' + tally[winner] + ' / 通算' + w.pmCount + '回目)');
+      w.trust += 2;
+      this.logMsg(w.name + 'は組閣で信用+2 (信用' + w.trust + ')。議員は在任中固定される。');
       this.checkWin();
       this.phase = 'turn';
       await this.notify();
     }
 
-    // ---- 党首交代(信用ボーナス一般化) ----
     onLeaderMaybeChanged(p) {
       var lead = this.leaderPol(p);
       if (!lead) { p._leaderId = null; return; }
@@ -440,7 +442,6 @@
       }
     }
 
-    // ---- スナップショット(UI用) ----
     snapshot() {
       var self = this;
       return {
@@ -448,10 +449,11 @@
         over: this.over, winner: this.winner ? this.winner.idx : null,
         electionCooldown: this.electionCooldown,
         field: this.fieldInfluence(), fieldDominant: this.fieldDominant(),
+        goals: { field: FIELD_WIN, trust: TRUST_WIN, pm: PM_WIN },
         players: this.players.map(function (p) {
           return {
-            idx: p.idx, name: p.name, color: p.color, isPM: p.isPM,
-            gold: p.gold, trust: p.trust, ip: deepCopy(p.ip),
+            idx: p.idx, name: p.name, color: p.color, isPM: p.isPM, pmCount: p.pmCount,
+            gold: p.gold, trust: p.trust,
             infl: self.influenceByIdeo(p), total: self.totalInfluence(p),
             strongest: p.pols.length ? self.strongestIdeo(p) : null,
             pols: deepCopy(p.pols), lawsN: p.laws.length
@@ -463,7 +465,7 @@
     }
   }
 
-  var ENGINE = { Game: Game, ideoJp: ideoJp };
+  var ENGINE = { Game: Game, ideoJp: ideoJp, FIELD_WIN: FIELD_WIN, TRUST_WIN: TRUST_WIN, PM_WIN: PM_WIN };
   root.PL_ENGINE = ENGINE;
   if (typeof module !== 'undefined' && module.exports) module.exports = ENGINE;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
