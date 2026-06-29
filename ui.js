@@ -35,41 +35,16 @@
   }
   var COORDS = cellCoords();
 
-  // ---------- 盤面描画 ----------
+  // ---------- 中央(場)描画: 政界の勢力図 + 山札 + ターン情報 ----------
   function renderBoard(snap) {
     var board = $('board');
     board.innerHTML = '';
-    // 外周マス
-    for (var i = 0; i < BOARD.length; i++) {
-      var sp = BOARD[i], rc = COORDS[i];
-      var cell = el('div', 'cell k-' + sp.kind);
-      cell.style.gridRow = (rc[0] + 1); cell.style.gridColumn = (rc[1] + 1);
-      var ico = el('div', 'ico', spaceIcon(sp.kind));
-      var lbl = el('div', 'lbl', sp.label);
-      cell.appendChild(ico); cell.appendChild(lbl);
-      // pawns
-      var pawns = el('div', 'pawns');
-      snap.players.forEach(function (p) {
-        if (p.pos === i) {
-          var pw = el('div', 'pawn' + (p.isPM ? ' pm' : ''));
-          pw.style.background = p.color; pw.title = p.name;
-          pawns.appendChild(pw);
-        }
-      });
-      cell.appendChild(pawns);
-      if (snap.curIdx != null && snap.players[snap.curIdx].pos === i) cell.classList.add('cur');
-      board.appendChild(cell);
-    }
-    // 中央
-    var center = el('div', '', '');
-    center.id = 'center';
-    center.style.gridRow = '2 / 7'; center.style.gridColumn = '2 / 7';
+    var center = el('div', '', ''); center.id = 'center';
     center.appendChild(influenceGauges(snap));
     var decks = el('div', 'decks');
-    decks.appendChild(deckPill('政治家', game.polDeck.length));
-    decks.appendChild(deckPill('チャンス', game.chanceDeck.length));
-    decks.appendChild(deckPill('インシデント', game.incidentDeck.length));
-    decks.appendChild(deckPill('法案', game.lawDeck.length));
+    decks.appendChild(deckPill('政治家山札', game.polDeck.length));
+    decks.appendChild(deckPill('法案山札', game.lawDeck.length));
+    if (snap.electionCooldown > 0) decks.appendChild(deckPill('次の選挙まで', snap.electionCooldown));
     center.appendChild(decks);
     var phase = el('div', '', 'ターン ' + snap.turn + ' / ' + phaseJp(snap.phase));
     phase.style.color = '#9fb0c8'; phase.style.fontSize = '12px';
@@ -77,9 +52,6 @@
     board.appendChild(center);
   }
   function deckPill(name, n) { var d = el('div', 'deckpill', name + ':' + n); return d; }
-  function spaceIcon(k) {
-    return { election: '🗳', politician: '👤', ip: '★', chance: '🎴', incident: '⚡', law: '📜', money: '💰', rest: '💤' }[k] || '';
-  }
   function phaseJp(p) {
     return { setup: '準備', turn: '行動', vote: '採決', election: '首班指名選挙', gameover: '終了' }[p] || p;
   }
@@ -119,13 +91,13 @@
       track.appendChild(fill);
       track.appendChild(el('span', 'ginfl', String(field[k])));
       row.appendChild(track);
-      // 世論の追い風
+      // 優勢思想は法案効果が増す
       var tail = el('span', 'gtail');
-      if (snap.climate && snap.climate[k] > 0) { tail.textContent = '追い風'; tail.title = '世論の追い風: この思想が最強のプレイヤーはIPマスでIP+1'; }
+      if (anyField && domK === k) { tail.textContent = '優勢'; tail.title = 'この思想が場で優勢。該当法案の効果が増す'; }
       row.appendChild(tail);
       wrap.appendChild(row);
     });
-    var note = el('div', 'gnote', '全プレイヤーの政治家の思想値を合算した、政界における各思想の勢力。「追い風」は世論（インシデント）が後押し中の思想。');
+    var note = el('div', 'gnote', '全プレイヤーの政治家の思想値を合算した、政界における各思想の勢力。優勢な思想の法案は効果が増す。');
     wrap.appendChild(note);
     return wrap;
   }
@@ -144,7 +116,6 @@
       res.appendChild(el('span', '', '💰' + p.gold + 'G'));
       res.appendChild(el('span', '', '信用' + p.trust));
       res.appendChild(el('span', '', '影響' + p.total));
-      if (p.skipTurns > 0) res.appendChild(el('span', '', '休' + p.skipTurns));
       card.appendChild(res);
       var iprow = el('div', 'iprow');
       IDK.forEach(function (k) {
@@ -163,27 +134,16 @@
       });
       card.appendChild(pm);
       var hc = el('div', 'res');
-      hc.appendChild(el('span', '', '🎴ﾁｬﾝｽ' + p.chanceN));
-      hc.appendChild(el('span', '', '📜法案' + p.lawsN));
-      if (p.basicEnacted) hc.appendChild(el('span', '', '🏛' + p.basicEnacted));
+      hc.appendChild(el('span', '', '📜法案手札' + p.lawsN));
       card.appendChild(hc);
       box.appendChild(card);
     });
-    // 成立法案 / 基幹政策
+    // 成立法案
     var en = $('enacted'); en.innerHTML = '';
     en.appendChild(el('h3', '', '成立法案 (' + snap.enacted.length + '/5)'));
     snap.enacted.forEach(function (e) {
       en.appendChild(el('div', 'law', e.name + ' [' + snap.players[e.owner].name + ']'));
     });
-    if (snap.basicSlot && snap.basicSlot.length) {
-      en.appendChild(el('h3', '', '基幹政策(永続)'));
-      snap.basicSlot.forEach(function (e) {
-        var d = ideoDef(e.ideo);
-        var b = el('div', 'law', '🏛 ' + e.name + ' [' + snap.players[e.owner].name + ']');
-        if (d) { b.style.background = '#2a3852'; b.style.borderLeft = '4px solid ' + d.color; }
-        en.appendChild(b);
-      });
-    }
   }
   function polTotal(c) { var s = (c.infl.non || 0); IDK.forEach(function (k) { s += (c.infl[k] || 0); }); return s; }
 
@@ -212,7 +172,6 @@
     var showIdx = (pending && pending.pi != null) ? pending.pi : snap.curIdx;
     if (hotseat || showIdx === humanIdx) {
       var p = game.players[showIdx];
-      p.chance.forEach(function (c) { hand.appendChild(handCard(c, 'chance', '🎴')); });
       p.laws.forEach(function (c) { hand.appendChild(handCard(c, 'law', '📜')); });
     }
   }
@@ -291,7 +250,7 @@
   function decQuestion(dec) {
     if (dec.q) return dec.q;
     switch (dec.type) {
-      case 'turnAction': return dec.when === 'pre' ? '行動を選択(サイコロ前)' : '追加行動を選択';
+      case 'turnAction': return 'コマンドを選択（各1回ずつ）';
       case 'pickPolitician': return '政治家を選ぶ';
       case 'vote': return '法案「' + dec.card.name + '」に投票';
       case 'candidacy': return '首班指名選挙: 立候補しますか?';
@@ -422,17 +381,18 @@
   function showRules() {
     var mc = $('modal-content');
     mc.innerHTML = '<h2>POLITICA 遊び方</h2>' +
-      '<p>サイコロで盤面を進み、止まったマスで政治家を集め・カードを引き・法案を成立させて、' +
+      '<p>各プレイヤーは議員5名を擁する政党。自分の手番に下記コマンドを<b>各1回ずつ</b>実行できる。' +
       'いずれかの<b>イデオロギーIPを勝利値まで貯めれば勝利</b>。</p>' +
       '<ul>' +
-      '<li>👤政治家獲得: 山札から選んでスロット(最大5)に加える。影響力の合計があなたの政治力。</li>' +
-      '<li>★IP: 一番影響力の高いイデオロギーのIPが+1。</li>' +
-      '<li>🎴チャンス/⚡インシデント: 1G or 1IPで引く / 強制発生。</li>' +
-      '<li>📜法案提出: 法案を引き、採決にかける。賛成影響力>反対で可決し、提出者はIPと信用度を得る。</li>' +
-      '<li>🗳総選挙: 首班が通過すると首班指名選挙。影響力の票を集めた者が首班(首相)に。</li>' +
-      '<li>基幹政策(影響力12以上で提出可)は可決で最強思想IPを一気に+5する廃案不可の永続政策。終盤の切り札。</li>' +
+      '<li>📜<b>法案を引く</b>: 法案カードを1枚手札に加える(手札3枚まで)。</li>' +
+      '<li>👤<b>政治家を入替</b>: 山札から3枚引き、1枚を自党の議員と入れ替える(常に5名)。影響力の合計が政治力。</li>' +
+      '<li>🏛<b>法案を提出</b>: 法案を採決にかける。賛成影響力>反対かつ必要影響力で可決。提出者はIPと信用を得る。' +
+      '<b>自分の地盤(影響力)・高い信用・場で優勢な思想</b>だと法案が真価を発揮し追加IP。</li>' +
+      '<li>🗳<b>選挙を行う</b>: 信用2を払い首班指名選挙。影響力の票を最も集めた者が首班(首相)に。' +
+      '首班は組閣で信用+5・最強思想IP+2、さらに毎手番の施政で最強思想IP+1。</li>' +
+      '<li>💰<b>買収(5G)</b>: 相手の議員1名を奪い自党へ(玉突きで自党の最弱を放出)。</li>' +
       '</ul>' +
-      '<p>チャンスカードの使用には信用度を消費します。無主義の政治家は票数にはなりますが特定思想のIPは伸ばしません。</p>';
+      '<p>無主義の政治家は票数(影響力)にはなりますが、特定思想のIPは伸ばしません。</p>';
     var b = el('button', 'ghost', '閉じる'); b.onclick = closeModal;
     mc.appendChild(b);
     $('modal').classList.remove('modal-hidden');

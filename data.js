@@ -18,7 +18,7 @@
   var WIN_IP = 20;
 
   // イデオロギー補正: 法案/IPで得るIPに掛ける重み。各思想の勝率を均すためのバランス調整値。
-  var IDEO_WEIGHT = { cap: 1.0, mil: 1.04, com: 1.43, sci: 1.0, env: 0.86 };
+  var IDEO_WEIGHT = { cap: 0.82, mil: 1.55, com: 0.45, sci: 1.6, env: 1.05 };
 
   // 盤面トラック (外周ループ)。kind と説明。
   var BOARD = [
