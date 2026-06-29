@@ -1,0 +1,107 @@
+:root{
+  --cap:#e0a82e; --mil:#6b3f3f; --com:#c0392b; --sci:#2e7dd1; --env:#3a9d4a;
+  --bg:#1c2230; --panel:#2a3346; --panel2:#333d54; --ink:#eef2f8; --muted:#9fb0c8;
+  --gold:#d8b24a;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Yu Gothic","Meiryo",system-ui,sans-serif;}
+#app{max-width:1280px;margin:0 auto;padding:10px;}
+#topbar{display:flex;align-items:center;gap:16px;border-bottom:2px solid #3a4a66;padding-bottom:6px;margin-bottom:8px;}
+#topbar h1{font-size:26px;margin:0;letter-spacing:3px;font-weight:800;}
+#topbar h1 .sub{font-size:13px;color:var(--muted);letter-spacing:1px;margin-left:6px;}
+#turninfo{flex:1;color:var(--muted);font-size:14px;}
+button{cursor:pointer;border:none;border-radius:6px;padding:7px 14px;font-size:14px;font-family:inherit;}
+button.primary{background:var(--gold);color:#222;font-weight:700;}
+button.ghost{background:#3a4a66;color:var(--ink);}
+button.act{background:#41567f;color:#fff;margin:3px;}
+button.act:hover{background:#4f69a0;}
+button:disabled{opacity:.4;cursor:not-allowed;}
+
+.panel{background:var(--panel);border-radius:10px;padding:18px;margin:12px 0;}
+#setup label{display:block;margin:10px 0;font-size:15px;}
+#setup input,#setup select{font-size:15px;padding:4px 8px;border-radius:5px;border:1px solid #556;background:#1b2231;color:#fff;}
+
+/* レイアウト */
+#game{display:grid;grid-template-columns:1fr 300px;grid-template-rows:auto auto;gap:10px;}
+#boardWrap{grid-column:1;grid-row:1;}
+#side{grid-column:2;grid-row:1 / span 2;display:flex;flex-direction:column;gap:8px;}
+#bottom{grid-column:1;grid-row:2;}
+#logWrap{grid-column:1 / span 2;grid-row:3;}
+
+/* 盤面 7x7 グリッド */
+#board{display:grid;grid-template-columns:repeat(7,1fr);grid-template-rows:repeat(7,72px);gap:4px;
+  background:#243a5e;border-radius:12px;padding:8px;aspect-ratio:1/1;max-width:720px;margin:0 auto;}
+.cell{background:var(--panel2);border-radius:7px;font-size:11px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;text-align:center;position:relative;padding:2px;overflow:hidden;border:2px solid transparent;}
+.cell .lbl{font-weight:700;line-height:1.15;}
+.cell .ico{font-size:18px;}
+.cell.k-election{background:#7a6f3a;color:#fff;}
+.cell.k-politician{background:#3f5e86;}
+.cell.k-ip{background:#5a4a86;}
+.cell.k-chance{background:#3a7d8c;}
+.cell.k-incident{background:#8c4a4a;}
+.cell.k-law{background:#b5702a;}
+.cell.k-money{background:#4a7a55;}
+.cell.k-rest{background:#2e6e3a;}
+.cell.cur{border-color:#ffd34d;box-shadow:0 0 10px #ffd34d88;}
+.pawns{position:absolute;bottom:1px;right:1px;display:flex;gap:1px;flex-wrap:wrap;justify-content:flex-end;}
+.pawn{width:12px;height:12px;border-radius:50%;border:1.5px solid #fff;}
+.pawn.pm{box-shadow:0 0 0 2px #ffd34d;}
+
+/* 中央パネル */
+#center{grid-column:2 / 7;grid-row:2 / 7;background:#1b2940;border-radius:10px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;padding:8px;gap:6px;}
+#triangle{width:100%;max-width:230px;}
+#center .decks{display:flex;gap:8px;font-size:11px;color:var(--muted);flex-wrap:wrap;justify-content:center;}
+#center .deckpill{background:#2a3852;border-radius:5px;padding:2px 7px;}
+
+/* プレイヤーカード */
+.pcard{background:var(--panel);border-radius:9px;padding:8px;border-left:5px solid #888;font-size:13px;}
+.pcard.me{outline:2px solid var(--gold);}
+.pcard.active{box-shadow:0 0 0 2px #ffd34d;}
+.pcard .phead{display:flex;justify-content:space-between;align-items:center;font-weight:700;}
+.pcard .pm-badge{background:#ffd34d;color:#222;border-radius:4px;font-size:10px;padding:1px 5px;font-weight:700;}
+.pcard .res{display:flex;gap:10px;font-size:12px;color:var(--muted);margin:3px 0;}
+.iprow{display:flex;gap:3px;margin-top:3px;}
+.ipchip{flex:1;border-radius:4px;text-align:center;font-size:11px;padding:2px 0;color:#fff;position:relative;}
+.ipchip b{font-size:13px;}
+.ipchip.s-cap{background:var(--cap);color:#222;}
+.ipchip.s-mil{background:var(--mil);}
+.ipchip.s-com{background:var(--com);}
+.ipchip.s-sci{background:var(--sci);}
+.ipchip.s-env{background:var(--env);}
+.ipchip.lead{outline:2px solid #fff;}
+.polmini{display:flex;flex-wrap:wrap;gap:2px;margin-top:4px;}
+.polmini .pm-card{font-size:10px;background:#1b2231;border-radius:4px;padding:1px 4px;border-left:3px solid #888;}
+
+#enacted{background:var(--panel);border-radius:9px;padding:8px;font-size:12px;}
+#enacted h3{margin:0 0 4px;font-size:13px;color:var(--muted);}
+#enacted .law{background:#3a2e1e;border-radius:4px;padding:2px 6px;margin:2px 0;}
+
+/* 決定バー & 手札 */
+#decision{min-height:54px;background:#222d44;border-radius:8px;padding:8px;margin-bottom:6px;}
+#decision .q{font-weight:700;margin-bottom:5px;}
+#hand{display:flex;gap:6px;flex-wrap:wrap;min-height:90px;}
+.card{width:104px;min-height:84px;background:#26324a;border-radius:8px;padding:6px;font-size:11px;border-top:4px solid #888;cursor:pointer;position:relative;transition:transform .1s;}
+.card:hover{transform:translateY(-3px);}
+.card.sel{outline:2px solid var(--gold);}
+.card .cn{font-weight:700;font-size:12px;margin-bottom:3px;}
+.card .ce{color:var(--muted);font-size:10px;line-height:1.25;max-height:48px;overflow:hidden;}
+.card.t-chance{border-top-color:#3a7d8c;}
+.card.t-law{border-top-color:#b5702a;}
+.card.t-pol{border-top-color:#3f5e86;}
+.card .tag{position:absolute;top:4px;right:5px;font-size:9px;color:var(--muted);}
+.card .polface{width:100%;height:60px;object-fit:cover;border-radius:5px;margin-bottom:3px;display:block;}
+#triangle image{clip-path:circle(48%);}
+
+#log{background:#161d2b;border-radius:8px;padding:8px;height:130px;overflow-y:auto;font-size:12px;line-height:1.5;}
+#log .l{border-bottom:1px solid #222c3f;padding:1px 0;color:#c7d3e6;}
+#log .l.star{color:#ffd86b;font-weight:700;}
+
+#modal{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;z-index:50;}
+#modal.modal-hidden{display:none;}
+.modal-box{background:var(--panel);border-radius:12px;padding:20px;max-width:680px;max-height:84vh;overflow:auto;}
+#modal-content h2{margin-top:0;}
+.win-banner{font-size:22px;color:#ffd86b;font-weight:800;text-align:center;padding:10px;}
+
+@media(max-width:980px){#game{grid-template-columns:1fr;}#side{grid-column:1;grid-row:auto;}}
