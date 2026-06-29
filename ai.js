@@ -90,9 +90,21 @@
           if (lead && dec.players.indexOf(lead.idx) >= 0) return { idx: lead.idx };
           return { idx: dec.players[0] };
         }
+        case 'pickRepeal': {
+          // 廃案: 信用が高い相手(脅威)の成立法案を狙って信用-2を与える。自分の法案は狙わない。
+          var bi = -1, bv = 12; // 相手信用がこれ未満なら廃案しない(無駄打ち回避)
+          dec.enacted.forEach(function (e, i) {
+            if (e.owner === pi) return;
+            var t = g.players[e.owner].trust;
+            if (t > bv) { bv = t; bi = i; }
+          });
+          return { index: bi };
+        }
         case 'vote': {
           var card = dec.card, s4 = myStrong(g, pi);
           var proposer = g.players[dec.proposer];
+          // 自分の法案を廃案にする提案には反対
+          if (dec.repeal && dec.repeal.owner === pi) return { yes: false };
           // 提出者が信用勝利に近い、または最有力なら反対
           if (proposer.trust >= 16) return { yes: false };
           var lead2 = leadingOpponent(g, pi);

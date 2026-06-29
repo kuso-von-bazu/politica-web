@@ -225,7 +225,7 @@
       opts.push({ id: 'donate', label: '献金(+' + (p.isPM ? 2 : 1) + 'G)' });
       if (p.laws.length < LAW_HAND) opts.push({ id: 'lawDraw', label: '法案を引く' + (p.isPM ? '(2枚)' : '') });
       if (!p.isPM) opts.push({ id: 'polSwap', label: '政治家を入替' });
-      if (p.laws.length > 0 && this.enacted.length < 5 && !(this.lawFlags.purge && this.strongestIdeo(p) === 'com'))
+      if (p.laws.length > 0 && (this.enacted.length < 5 || this.enacted.length > 0) && !(this.lawFlags.purge && this.strongestIdeo(p) === 'com'))
         opts.push({ id: 'lawPropose', label: '法案を提出' });
       if (!p.isPM && p.gold >= BRIBE_COST && this.bribable(p)) opts.push({ id: 'bribe', label: '買収(' + BRIBE_COST + 'G)' });
       if (this.electionCooldown <= 0 && p.trust >= ELECTION_TRUST) opts.push({ id: 'election', label: '選挙を行う(信用' + ELECTION_TRUST + ')' });
@@ -275,31 +275,44 @@
       return wi;
     }
 
-    // ---- 法案提出 ----
+    // ---- 法案提出(既存の成立法案を廃案にできる) ----
     async cmdLawPropose(p) {
       if (p.laws.length === 0) return;
       var pick = await this.choose(p.idx, { type: 'pickCard', kind: 'law', cards: p.laws, cancelable: true, q: '提出する法案' });
       if (!pick || pick.index == null) return;
       var card = p.laws[pick.index];
+      // 廃案対象(任意): 成立法案を1つ選ぶと、可決時にそれを廃案にできる
+      var repealIdx = null;
+      if (this.enacted.length > 0) {
+        var rd = await this.choose(p.idx, {
+          type: 'pickRepeal',
+          enacted: this.enacted.map(function (e) { return { name: e.card.name, owner: e.owner }; }),
+          q: 'この法案で廃案にする成立法案(任意・廃案されると提出者の信用-2)'
+        });
+        if (rd && rd.index != null && rd.index >= 0 && rd.index < this.enacted.length) repealIdx = rd.index;
+      }
       var need = this.lawNeed(card);
-      this.logMsg(p.name + 'が法案「' + card.name + '」を提出 (必要影響力' + need + '/提出者' + this.totalInfluence(p) + ')。');
+      var rtxt = (repealIdx != null) ? ' / 「' + this.enacted[repealIdx].card.name + '」の廃案を含む' : '';
+      this.logMsg(p.name + 'が法案「' + card.name + '」を提出 (必要影響力' + need + '/提出者' + this.totalInfluence(p) + rtxt + ')。');
       p.laws.splice(pick.index, 1);
-      await this.runVote(p, card, need);
+      await this.runVote(p, card, need, repealIdx);
     }
     lawNeed(card) {
       var s = 0; IDKEYS.forEach(function (k) { s += Math.abs(card.d[k] || 0); });
       return Math.max(3, s * 2);
     }
 
-    async runVote(proposer, card, need) {
+    async runVote(proposer, card, need, repealIdx) {
       this.phase = 'vote';
       await this.notify();
+      var repealInfo = (repealIdx != null && this.enacted[repealIdx])
+        ? { name: this.enacted[repealIdx].card.name, owner: this.enacted[repealIdx].owner } : null;
       var votes = {}; votes[proposer.idx] = 'yes';
       for (var i = 0; i < this.players.length; i++) {
         var q = this.players[i];
         if (q.idx === proposer.idx) continue;
         if (this.lawFlags.twoParty && !this.isTop2Influence(q)) { votes[q.idx] = 'abstain'; continue; }
-        var v = await this.choose(q.idx, { type: 'vote', card: card, proposer: proposer.idx, need: need });
+        var v = await this.choose(q.idx, { type: 'vote', card: card, proposer: proposer.idx, need: need, repeal: repealInfo });
         votes[q.idx] = (v && v.yes) ? 'yes' : 'no';
       }
       var yesInf = 0, noInf = 0, supporters = [];
@@ -311,7 +324,7 @@
       var pass = (yesInf > noInf) && (yesInf >= need);
       if (pass) {
         this.logMsg('可決! (賛成' + yesInf + ' vs 反対' + noInf + ')');
-        await this.enactLaw(proposer, card, supporters);
+        await this.enactLaw(proposer, card, supporters, repealIdx);
       } else {
         this.logMsg('否決… (賛成' + yesInf + ' vs 反対' + noInf + ')');
         if (card.id) this.lawDiscard.push(card);
@@ -325,7 +338,15 @@
     }
 
     // 法案成立 → 信用を得る。場で優勢/地盤が強いと真価を発揮し信用が増す。
-    async enactLaw(proposer, card, supporters) {
+    //   repealIdx 指定時は、その成立法案を廃案にし、廃案された法案の提出者の信用-2。
+    async enactLaw(proposer, card, supporters, repealIdx) {
+      if (repealIdx != null && this.enacted[repealIdx]) {
+        var tgt = this.enacted.splice(repealIdx, 1)[0];
+        this.lawDiscard.push(tgt.card); this.clearLawFlag(tgt.card);
+        var owner = this.players[tgt.owner];
+        owner.trust -= 2;
+        this.logMsg('法案「' + tgt.card.name + '」が廃案に! 提出者' + owner.name + 'の信用-2 (信用' + owner.trust + ')。');
+      }
       proposer.trust += (card.pip || 0);
       supporters.forEach(function (s) { s.trust += (card.aip || 0); });
       // 主たる思想

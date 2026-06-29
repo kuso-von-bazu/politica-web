@@ -226,6 +226,12 @@
         dec.players.forEach(function (idx) { var p = game.players[idx]; box.appendChild(actBtn(p.name, function () { resolvePending({ idx: idx }); })); });
         box.appendChild(cancelBtn());
         break;
+      case 'pickRepeal':
+        dec.enacted.forEach(function (e, i) {
+          box.appendChild(actBtn('廃案: ' + e.name + '〔' + game.players[e.owner].name + '〕', function () { resolvePending({ index: i }); }));
+        });
+        box.appendChild(actBtn('廃案しない', function () { resolvePending({ index: -1 }); }));
+        break;
       case 'pickIdeo':
         IDK.forEach(function (k) { var d = ideoDef(k); box.appendChild(actBtn(d.icon + d.short, function () { resolvePending({ key: k }); })); });
         break;
@@ -264,7 +270,9 @@
   }
   function voteInfo(dec) {
     var c = dec.card;
-    return '効果: ' + (c.eff || effLawSummary(c)) + ' / 必要影響力' + dec.need + ' / 提出: ' + game.players[dec.proposer].name;
+    var s = '効果: ' + (c.eff || effLawSummary(c)) + ' / 必要影響力' + dec.need + ' / 提出: ' + game.players[dec.proposer].name;
+    if (dec.repeal) s += ' / 廃案対象: ' + dec.repeal.name + '〔' + game.players[dec.repeal.owner].name + '・成立で信用-2〕';
+    return s;
   }
 
   function actBtn(label, fn) { var b = el('button', 'act', label); b.onclick = fn; return b; }
@@ -387,7 +395,8 @@
       '<li>📜<b>法案を引く</b>: 法案を1枚手札へ(首班は2枚、手札3枚まで)。</li>' +
       '<li>👤<b>政治家を入替</b>: 山札3枚から1枚を自党の議員と入替(常に5名)。<b>首班は入替不可</b>。</li>' +
       '<li>🏛<b>法案を提出</b>: 採決。賛成影響力>反対かつ必要影響力で可決し<b>信用</b>を得る。' +
-      '<b>地盤(その思想の影響力≥10)・場で優勢</b>だと真価を発揮し信用が増す。</li>' +
+      '<b>地盤(その思想の影響力≥10)・場で優勢</b>だと真価を発揮し信用が増す。' +
+      '提出時に既存の成立法案を<b>廃案対象</b>に指定でき、可決されると廃案＝<b>その提出者の信用-2</b>。</li>' +
       '<li>🗳<b>選挙を行う</b>: 信用2を払い首班指名選挙。最多得票で首班(通算+1)。現職は再選にやや不利。</li>' +
       '<li>💰<b>買収(5G)</b>: 相手の議員1名を奪う(最弱を放出)。<b>首班は買収する/されるが不可</b>(議員固定)。</li>' +
       '</ul>' +
