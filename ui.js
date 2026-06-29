@@ -64,7 +64,7 @@
     var center = el('div', '', '');
     center.id = 'center';
     center.style.gridRow = '2 / 7'; center.style.gridColumn = '2 / 7';
-    center.appendChild(triangleSVG());
+    center.appendChild(influenceGauges(snap));
     var decks = el('div', 'decks');
     decks.appendChild(deckPill('政治家', game.polDeck.length));
     decks.appendChild(deckPill('チャンス', game.chanceDeck.length));
@@ -84,40 +84,49 @@
     return { setup: '準備', turn: '行動', vote: '採決', election: '首班指名選挙', gameover: '終了' }[p] || p;
   }
 
-  // 三角イデオロギーマップ (頂点: 共産/資本/軍国, 辺に 科学/環境)
-  function triangleSVG() {
-    var ns = 'http://www.w3.org/2000/svg';
-    var svg = document.createElementNS(ns, 'svg');
-    svg.setAttribute('viewBox', '0 0 200 180'); svg.id = 'triangle';
-    var pts = '100,8 192,172 8,172';
-    var tri = document.createElementNS(ns, 'polygon');
-    tri.setAttribute('points', pts); tri.setAttribute('fill', '#22304a');
-    tri.setAttribute('stroke', '#55709e'); tri.setAttribute('stroke-width', '2');
-    svg.appendChild(tri);
-    var labels = [
-      ['com', 100, 4], ['cap', 4, 178], ['mil', 196, 178],
-      ['sci', 150, 96], ['env', 50, 96]
-    ];
-    labels.forEach(function (L) {
-      var d = ideoDef(L[0]);
-      // 紋章画像(あれば)
-      var img = document.createElementNS(ns, 'image');
-      var size = 30;
-      img.setAttributeNS('http://www.w3.org/1999/xlink', 'href', EMBLEM_DIR + 'ideo_' + L[0] + '.png');
-      img.setAttribute('href', EMBLEM_DIR + 'ideo_' + L[0] + '.png');
-      img.setAttribute('width', size); img.setAttribute('height', size);
-      img.setAttribute('x', Math.max(2, Math.min(168, L[1] - size / 2)));
-      img.setAttribute('y', Math.max(2, L[2] - size - 2));
-      img.style.borderRadius = '50%';
-      svg.appendChild(img);
-      var t = document.createElementNS(ns, 'text');
-      t.setAttribute('x', L[1]); t.setAttribute('y', L[2]);
-      t.setAttribute('fill', d.color); t.setAttribute('font-size', '12');
-      t.setAttribute('text-anchor', 'middle'); t.setAttribute('font-weight', 'bold');
-      t.textContent = d.icon + d.short;
-      svg.appendChild(t);
+  // イデオロギー影響力ゲージ: 現在の手番プレイヤーの5思想の影響力を棒で表示。
+  // 一番長い=最強=IPマスでIPが入る思想。世論の追い風や各IPも併記し「影響力→勝利」の関係を可視化。
+  function influenceGauges(snap) {
+    var wrap = el('div', 'gauges');
+    var p = snap.players[snap.curIdx];
+    var title = el('div', 'gtitle');
+    var dot = el('span', 'gdot'); dot.style.background = p.color; title.appendChild(dot);
+    title.appendChild(el('span', '', p.name + ' の影響力'));
+    if (p.strongest) {
+      var sd = ideoDef(p.strongest);
+      var st = el('span', 'gstrong', '最強: ' + sd.short); st.style.color = sd.color;
+      title.appendChild(st);
+    }
+    wrap.appendChild(title);
+    // スケール = その人の最大影響力(最低8)で正規化
+    var maxv = 8; IDK.forEach(function (k) { if (p.infl[k] > maxv) maxv = p.infl[k]; });
+    IDK.forEach(function (k) {
+      var d = ideoDef(k);
+      var row = el('div', 'grow' + (p.strongest === k ? ' gstrongrow' : ''));
+      // 紋章(あれば)。無ければアイコン文字
+      var em = imgEl(EMBLEM_DIR + 'ideo_' + k + '.png', 'gem');
+      var emWrap = el('span', 'gemwrap'); emWrap.style.background = d.color;
+      emWrap.appendChild(em); emWrap.appendChild(el('span', 'gemico', d.icon));
+      row.appendChild(emWrap);
+      row.appendChild(el('span', 'gname', d.short));
+      var track = el('div', 'gtrack');
+      var fill = el('div', 'gfill'); fill.style.width = Math.round((p.infl[k] / maxv) * 100) + '%';
+      fill.style.background = d.color;
+      track.appendChild(fill);
+      var infv = el('span', 'ginfl', String(p.infl[k]));
+      track.appendChild(infv);
+      row.appendChild(track);
+      // 世論の追い風
+      var tail = el('span', 'gtail');
+      if (snap.climate && snap.climate[k] > 0) { tail.textContent = '追い風'; tail.title = '世論の追い風: このマス止まりでIP+1'; }
+      row.appendChild(tail);
+      // このプレイヤーの該当IP
+      row.appendChild(el('span', 'gip', 'IP' + p.ip[k]));
+      wrap.appendChild(row);
     });
-    return svg;
+    var note = el('div', 'gnote', '影響力＝政治家の思想値の合計（票数）。最も高い思想のIPが「★IPマス」で増え、勝利値で勝ち。');
+    wrap.appendChild(note);
+    return wrap;
   }
 
   // ---------- プレイヤー描画 ----------
