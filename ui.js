@@ -84,47 +84,48 @@
     return { setup: '準備', turn: '行動', vote: '採決', election: '首班指名選挙', gameover: '終了' }[p] || p;
   }
 
-  // イデオロギー影響力ゲージ: 現在の手番プレイヤーの5思想の影響力を棒で表示。
-  // 一番長い=最強=IPマスでIPが入る思想。世論の追い風や各IPも併記し「影響力→勝利」の関係を可視化。
+  // 場（政界全体）の影響力ゲージ: 全プレイヤーの影響力を思想ごとに合算して棒で表示。
+  // どの思想が政界で優勢か（勢力図）が一目で分かる。世論の追い風も併記。
   function influenceGauges(snap) {
     var wrap = el('div', 'gauges');
-    var p = snap.players[snap.curIdx];
+    // 場の合計影響力(全員の各思想influenceの和)
+    var field = { cap: 0, mil: 0, com: 0, sci: 0, env: 0 };
+    snap.players.forEach(function (p) { IDK.forEach(function (k) { field[k] += (p.infl[k] || 0); }); });
+    var domK = null, domv = -1;
+    IDK.forEach(function (k) { if (field[k] > domv) { domv = field[k]; domK = k; } });
+    var anyField = domv > 0;
+
     var title = el('div', 'gtitle');
-    var dot = el('span', 'gdot'); dot.style.background = p.color; title.appendChild(dot);
-    title.appendChild(el('span', '', p.name + ' の影響力'));
-    if (p.strongest) {
-      var sd = ideoDef(p.strongest);
-      var st = el('span', 'gstrong', '最強: ' + sd.short); st.style.color = sd.color;
+    title.appendChild(el('span', '', '場の影響力（政界の勢力図）'));
+    if (anyField && domK) {
+      var dd = ideoDef(domK);
+      var st = el('span', 'gstrong', '優勢: ' + dd.short); st.style.color = dd.color;
       title.appendChild(st);
     }
     wrap.appendChild(title);
-    // スケール = その人の最大影響力(最低8)で正規化
-    var maxv = 8; IDK.forEach(function (k) { if (p.infl[k] > maxv) maxv = p.infl[k]; });
+
+    var maxv = 8; IDK.forEach(function (k) { if (field[k] > maxv) maxv = field[k]; });
     IDK.forEach(function (k) {
       var d = ideoDef(k);
-      var row = el('div', 'grow' + (p.strongest === k ? ' gstrongrow' : ''));
-      // 紋章(あれば)。無ければアイコン文字
+      var row = el('div', 'grow' + (anyField && domK === k ? ' gstrongrow' : ''));
       var em = imgEl(EMBLEM_DIR + 'ideo_' + k + '.png', 'gem');
       var emWrap = el('span', 'gemwrap'); emWrap.style.background = d.color;
       emWrap.appendChild(em); emWrap.appendChild(el('span', 'gemico', d.icon));
       row.appendChild(emWrap);
       row.appendChild(el('span', 'gname', d.short));
       var track = el('div', 'gtrack');
-      var fill = el('div', 'gfill'); fill.style.width = Math.round((p.infl[k] / maxv) * 100) + '%';
+      var fill = el('div', 'gfill'); fill.style.width = Math.round((field[k] / maxv) * 100) + '%';
       fill.style.background = d.color;
       track.appendChild(fill);
-      var infv = el('span', 'ginfl', String(p.infl[k]));
-      track.appendChild(infv);
+      track.appendChild(el('span', 'ginfl', String(field[k])));
       row.appendChild(track);
       // 世論の追い風
       var tail = el('span', 'gtail');
-      if (snap.climate && snap.climate[k] > 0) { tail.textContent = '追い風'; tail.title = '世論の追い風: このマス止まりでIP+1'; }
+      if (snap.climate && snap.climate[k] > 0) { tail.textContent = '追い風'; tail.title = '世論の追い風: この思想が最強のプレイヤーはIPマスでIP+1'; }
       row.appendChild(tail);
-      // このプレイヤーの該当IP
-      row.appendChild(el('span', 'gip', 'IP' + p.ip[k]));
       wrap.appendChild(row);
     });
-    var note = el('div', 'gnote', '影響力＝政治家の思想値の合計（票数）。最も高い思想のIPが「★IPマス」で増え、勝利値で勝ち。');
+    var note = el('div', 'gnote', '全プレイヤーの政治家の思想値を合算した、政界における各思想の勢力。「追い風」は世論（インシデント）が後押し中の思想。');
     wrap.appendChild(note);
     return wrap;
   }
