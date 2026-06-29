@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   var DATA = window.PL_DATA, ENGINE = window.PL_ENGINE, AI = window.PL_AI;
-  var IDE = DATA.IDEOLOGIES, BOARD = DATA.BOARD;
+  var IDE = DATA.IDEOLOGIES;
   var IDK = IDE.map(function (i) { return i.key; });
   var ideoJp = ENGINE.ideoJp;
 
@@ -23,17 +23,6 @@
     return im;
   }
   function polImg(c) { return imgEl(CARD_DIR + 'pol_' + c.id + '.png', 'polface'); }
-
-  // 7x7 外周セル → 盤面indexの対応 (時計回り 左上から)
-  function cellCoords() {
-    var coords = [];
-    for (var c = 0; c < 7; c++) coords.push([0, c]);          // top 0..6
-    for (var r = 1; r < 7; r++) coords.push([r, 6]);          // right 7..12
-    for (var c2 = 5; c2 >= 0; c2--) coords.push([6, c2]);     // bottom 13..18
-    for (var r2 = 5; r2 >= 1; r2--) coords.push([r2, 0]);     // left 19..23
-    return coords;
-  }
-  var COORDS = cellCoords();
 
   // ---------- 中央(場)描画: 政界の勢力図 + 山札 + ターン情報 ----------
   function renderBoard(snap) {

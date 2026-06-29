@@ -186,11 +186,11 @@
       this.phase = 'turn';
       p.used = {};
       this.logMsg('―― ' + p.name + ' の手番 ――');
-      // 現職特典(首班は手番開始時に最強思想IP+1。補正込み)
+      // 現職特典(首班は手番開始時に最強思想IPを蓄積。補正込みのため思想により増分が異なる)
       if (p.isPM && p.pols.length) {
         var sk = this.strongestIdeo(p);
-        this.addIPw(p, sk, 1);
-        this.logMsg(p.name + '(首班)の施政により' + ideoJp(sk) + 'IP+1 (計' + p.ip[sk] + ')。');
+        var got = this.addIPw(p, sk, 1);
+        this.logMsg(p.name + '(首班)の施政により' + ideoJp(sk) + 'IP' + (got > 0 ? '+' + got : 'を蓄積') + ' (計' + p.ip[sk] + ')。');
         if (this.checkWin()) return;
       }
       await this.notify();
@@ -334,8 +334,8 @@
         if (proposer.trust >= 12) { bonus += 1; reasons.push('高信用'); }
         if (fieldDom === primary) { bonus += 2; reasons.push('場の支持'); }
         if (bonus > 0) {
-          this.addIPw(proposer, primary, bonus);
-          this.logMsg('法案が真価を発揮! ' + ideoJp(primary) + 'IP+' + bonus + ' [' + reasons.join('・') + ']');
+          var bg = this.addIPw(proposer, primary, bonus);
+          this.logMsg('法案が真価を発揮! ' + ideoJp(primary) + 'IP' + (bg > 0 ? '+' + bg : 'を上積み') + ' [' + reasons.join('・') + ']');
         }
       }
       this.logMsg(proposer.name + 'はIP/信用を獲得した。');
@@ -418,11 +418,11 @@
       this.pmIdx = winner; this.players[winner].isPM = true;
       var w = this.players[winner];
       this.logMsg(w.name + 'が首班に指名された! (得票' + tally[winner] + ')');
-      // 首班の特典: 組閣で信用+5、最強思想IP+2
+      // 首班の特典: 組閣で信用+5、最強思想IP+2(補正込み)
       w.trust += 5;
       var sk = this.strongestIdeo(w);
-      this.addIPw(w, sk, 2);
-      this.logMsg(w.name + 'は組閣で信用+5、' + ideoJp(sk) + 'IP+2 (計' + w.ip[sk] + ')。');
+      var eg = this.addIPw(w, sk, 2);
+      this.logMsg(w.name + 'は組閣で信用+5、' + ideoJp(sk) + 'IP' + (eg > 0 ? '+' + eg : 'を蓄積') + ' (計' + w.ip[sk] + ')。');
       this.checkWin();
       this.phase = 'turn';
       await this.notify();
